@@ -1,25 +1,35 @@
 import axios from "axios";
 
-const API = "http://127.0.0.1:5000/api";
-const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:5000/api/meetings";
+const API_BASE =
+  import.meta.env.VITE_API_URL || "http://127.0.0.1:5000/api/meetings";
 
 const auth = () => ({
   headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
 });
 
+// ------------------------
+// GET all meetings
+// ------------------------
 export const getMeetings = async () => {
-  const res = await axios.get(`${API}/meetings`, auth());
+  const res = await axios.get(API_BASE, auth());
   return res.data;
 };
 
+// ------------------------
+// CREATE a meeting
+// ------------------------
 export const createMeeting = async (meetingData: any) => {
-  const res = await axios.post(`${API}/meetings`, meetingData, auth());
+  const res = await axios.post(API_BASE, meetingData, auth());
   return res.data;
 };
 
+// ------------------------
+// RESOLVE a meeting
+// ------------------------
 export const resolveMeeting = async (id: string) => {
   const token = localStorage.getItem("token");
-  const response = await fetch(`http://localhost:5000/api/meetings/${id}/resolve`, {
+
+  const response = await fetch(`${API_BASE}/${id}/resolve`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -33,4 +43,3 @@ export const resolveMeeting = async (id: string) => {
 
   return response.json();
 };
-
