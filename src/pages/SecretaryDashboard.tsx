@@ -1,331 +1,221 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar, Clock, LogOut, Plus, Users, Search, Bell } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { Input } from "@/components/ui/input";
-import { Layout } from "@/components/Layout1";
+import { Calendar, Clock, Users, Plus } from "lucide-react";
+import { Layout } from "@/components/Layout";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
+import { getMeetings, createMeeting, resolveMeeting } from "@/integrations/api/meetings";
 
 const SecretaryDashboard = () => {
-  const navigate = useNavigate();
-  const [currentDate] = useState(new Date());
+  const [meetings, setMeetings] = useState<any[]>([]);
+  const [openAddMeeting, setOpenAddMeeting] = useState(false);
+  const [newMeeting, setNewMeeting] = useState({
+    title: "",
+    date: "",
+    time: "",
+    venue: "",
+    project: "",
+  });
 
-  const executives = [
-    { id: 1, name: "Robert Johnson", status: "Available", meetings: 3 },
-    { id: 2, name: "Emily Davis", status: "In Meeting", meetings: 5 },
-    { id: 3, name: "Michael Chen", status: "On Leave", meetings: 0 },
-  ];
+  // ✅ Load all meetings
+  const loadMeetings = async () => {
+    try {
+      const data = await getMeetings();
+      setMeetings(data);
+    } catch (err) {
+      toast.error("Failed to load meetings");
+      console.error(err);
+    }
+  };
 
-  const pendingMeetings = [
-    {
-      id: 1,
-      title: "Quarterly Review",
-      executives: ["Robert Johnson", "Emily Davis"],
-      duration: "2 hours",
-      status: "Pending Schedule",
-    },
-    {
-      id: 2,
-      title: "Budget Discussion",
-      executives: ["Robert Johnson", "Michael Chen"],
-      duration: "1 hour",
-      status: "Conflict Detected",
-    },
-  ];
+  useEffect(() => {
+    loadMeetings();
+  }, []);
+
+  // ✅ Add new meeting
+  const handleAddMeeting = async () => {
+    if (!newMeeting.title || !newMeeting.date || !newMeeting.time) {
+      toast.error("Please fill all fields");
+      return;
+    }
+
+    try {
+      await createMeeting(newMeeting);
+      toast.success("Meeting added successfully");
+      setOpenAddMeeting(false);
+      setNewMeeting({ title: "", date: "", time: "", venue: "", project: "" });
+      loadMeetings();
+    } catch (err) {
+      toast.error("Failed to add meeting");
+      console.error(err);
+    }
+  };
+
+  // ✅ Resolve (mark as completed)
+  const handleResolve = async (id: string) => {
+    try {
+      await resolveMeeting(id);
+      toast.success("Meeting marked as completed");
+      setMeetings((prev) =>
+        prev.map((m) => (m._id === id ? { ...m, status: "completed" } : m))
+      );
+    } catch (err) {
+      toast.error("Failed to resolve meeting");
+      console.error(err);
+    }
+  };
+
+  // ✅ Filter lists
+  const pendingMeetings = meetings.filter((m) => m.status !== "completed");
+  const completedMeetings = meetings.filter((m) => m.status === "completed");
 
   return (
     <Layout>
-      <div className="min-h-screen bg-background">
-        {/* Header */}
-        <header className="bg-card border-b border-border shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <Calendar className="w-8 h-8 text-secondary" />
-                <div>
-                  <h1 className="text-2xl font-bold text-foreground">
-                    Secretary Dashboard
-                  </h1>
-                  <p className="text-sm text-muted-foreground">
-                    {currentDate.toLocaleDateString("en-US", {
-                      weekday: "long",
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <Button variant="outline" size="icon">
-                  <Bell className="w-4 h-4" />
-                </Button>
-                <Button variant="outline" onClick={() => navigate("/")}>
-                  <LogOut className="w-4 h-4 mr-2" />
-                  Logout
-                </Button>
-              </div>
+      <div className="min-h-screen bg-background p-6">
+        {/* HEADER */}
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center space-x-3">
+            <Calendar className="w-8 h-8 text-primary" />
+            <div>
+              <h1 className="text-2xl font-bold">Secretary Dashboard</h1>
+              <p className="text-sm text-muted-foreground">
+                View and manage all executive meetings
+              </p>
             </div>
           </div>
-        </header>
 
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {/* Quick Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Total Executives
-                </CardTitle>
-                <Users className="w-4 h-4 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold text-primary">
-                  {executives.length}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Active executives
-                </p>
-              </CardContent>
-            </Card>
+          {/* ADD MEETING */}
+          <Dialog open={openAddMeeting} onOpenChange={setOpenAddMeeting}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="w-4 h-4 mr-2" /> Add Meeting
+              </Button>
+            </DialogTrigger>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Pending Meetings
-                </CardTitle>
-                <Calendar className="w-4 h-4 text-secondary" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold text-secondary">
-                  {pendingMeetings.length}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Awaiting scheduling
-                </p>
-              </CardContent>
-            </Card>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add New Meeting</DialogTitle>
+                <DialogDescription>Enter meeting details below.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <Label>Title</Label>
+                <Input
+                  value={newMeeting.title}
+                  onChange={(e) => setNewMeeting({ ...newMeeting, title: e.target.value })}
+                />
+                <Label>Date</Label>
+                <Input
+                  type="date"
+                  value={newMeeting.date}
+                  onChange={(e) => setNewMeeting({ ...newMeeting, date: e.target.value })}
+                />
+                <Label>Time</Label>
+                <Input
+                  value={newMeeting.time}
+                  onChange={(e) => setNewMeeting({ ...newMeeting, time: e.target.value })}
+                />
+                <Label>Venue</Label>
+                <Input
+                  value={newMeeting.venue}
+                  onChange={(e) => setNewMeeting({ ...newMeeting, venue: e.target.value })}
+                />
+                <Label>Project</Label>
+                <Input
+                  value={newMeeting.project}
+                  onChange={(e) => setNewMeeting({ ...newMeeting, project: e.target.value })}
+                />
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setOpenAddMeeting(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleAddMeeting}>Save</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Today's Meetings
-                </CardTitle>
-                <Clock className="w-4 h-4 text-accent" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold text-accent">8</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Scheduled today
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Conflicts</CardTitle>
-                <Bell className="w-4 h-4 text-destructive" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold text-destructive">1</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Requires attention
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="grid lg:grid-cols-3 gap-8">
-            {/* Main Content */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* Search and Schedule */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Schedule New Meeting</CardTitle>
-                  <CardDescription>
-                    Find common time slots for executives
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div className="flex gap-3">
-                      <Input
-                        placeholder="Search executives or meeting title..."
-                        className="flex-1"
-                      />
-                      <Button className="bg-secondary hover:bg-secondary/90">
-                        <Search className="w-4 h-4 mr-2" />
-                        Find Slots
-                      </Button>
-                    </div>
-                    <Button className="w-full bg-primary hover:bg-primary/90">
-                      <Plus className="w-4 h-4 mr-2" />
-                      Create New Meeting
+        {/* ✅ PENDING MEETINGS */}
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Pending Meetings</CardTitle>
+            <CardDescription>Meetings yet to be completed</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {pendingMeetings.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No pending meetings.</p>
+            ) : (
+              pendingMeetings.map((m) => (
+                <div
+                  key={m._id}
+                  className="p-4 border rounded-lg flex justify-between items-center hover:shadow-md transition"
+                >
+                  <div>
+                    <h3 className="font-semibold">{m.title}</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {m.date} • {m.time} • {m.venue}
+                    </p>
+                    <Badge variant="outline">Pending</Badge>
+                  </div>
+                  <div className="flex flex-col items-end space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                      Created by: {m.user?.name || "Unknown"}
+                    </p>
+                    <Button variant="outline" size="sm" onClick={() => handleResolve(m._id)}>
+                      Resolve
                     </Button>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
 
-              {/* Pending Meetings */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Pending Meetings</CardTitle>
-                  <CardDescription>
-                    Meetings requiring your attention
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {pendingMeetings.map((meeting) => (
-                    <div
-                      key={meeting.id}
-                      className="p-4 rounded-lg border border-border bg-card hover:shadow-md transition-shadow"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-foreground mb-2">
-                            {meeting.title}
-                          </h3>
-                          <div className="space-y-1 text-sm text-muted-foreground">
-                            <div className="flex items-center">
-                              <Users className="w-4 h-4 mr-2" />
-                              {meeting.executives.join(", ")}
-                            </div>
-                            <div className="flex items-center">
-                              <Clock className="w-4 h-4 mr-2" />
-                              Duration: {meeting.duration}
-                            </div>
-                            <div
-                              className={`inline-block px-2 py-1 rounded text-xs mt-2 ${
-                                meeting.status === "Conflict Detected"
-                                  ? "bg-destructive/10 text-destructive"
-                                  : "bg-secondary/10 text-secondary"
-                              }`}
-                            >
-                              {meeting.status}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex flex-col gap-2">
-                          <Button variant="outline" size="sm">
-                            Resolve
-                          </Button>
-                          <Button variant="ghost" size="sm">
-                            Details
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Sidebar */}
-            <div className="space-y-6">
-              {/* Executive Status */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Executive Status</CardTitle>
-                  <CardDescription>Current availability</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {executives.map((exec) => (
-                    <div
-                      key={exec.id}
-                      className="p-3 rounded-lg bg-muted hover:bg-muted/80 transition-colors cursor-pointer"
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="font-medium text-sm">{exec.name}</p>
-                        <span
-                          className={`text-xs px-2 py-1 rounded ${
-                            exec.status === "Available"
-                              ? "bg-accent/20 text-accent"
-                              : exec.status === "In Meeting"
-                              ? "bg-secondary/20 text-secondary"
-                              : "bg-muted-foreground/20 text-muted-foreground"
-                          }`}
-                        >
-                          {exec.status}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {exec.meetings} meetings today
-                      </p>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              {/* Quick Actions with Popups */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Quick Actions</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {/* Manage Executives Popup */}
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button variant="outline" className="w-full justify-start">
-                        <Users className="w-4 h-4 mr-2" />
-                        Manage Executives
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Manage Executives</DialogTitle>
-                      </DialogHeader>
-                      <div className="space-y-3 mt-2">
-                        {executives.map((exec) => (
-                          <div
-                            key={exec.id}
-                            className="flex items-center justify-between p-2 border rounded-lg"
-                          >
-                            <p>{exec.name}</p>
-                            <Button variant="outline" size="sm">
-                              Edit
-                            </Button>
-                          </div>
-                        ))}
-                        <Button className="w-full mt-2">Add Executive</Button>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-
-                  {/* Send Notifications Popup */}
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button variant="outline" className="w-full justify-start">
-                        <Bell className="w-4 h-4 mr-2" />
-                        Send Notifications
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Send Notification</DialogTitle>
-                      </DialogHeader>
-                      <div className="space-y-3 mt-2">
-                        <Input placeholder="Recipient name or group" />
-                        <Input placeholder="Notification message" />
-                        <Button className="w-full mt-2">Send</Button>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        </main>
+        {/* ✅ COMPLETED MEETINGS */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Completed Meetings</CardTitle>
+            <CardDescription>Resolved meetings history</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {completedMeetings.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No completed meetings yet.</p>
+            ) : (
+              completedMeetings.map((m) => (
+                <div
+                  key={m._id}
+                  className="p-4 border rounded-lg flex justify-between items-center bg-muted hover:bg-muted/80 transition"
+                >
+                  <div>
+                    <h3 className="font-semibold">{m.title}</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {m.date} • {m.time} • {m.venue}
+                    </p>
+                    <Badge variant="secondary">Completed</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Created by: {m.user?.name || "Unknown"}
+                  </p>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
       </div>
     </Layout>
   );
 };
 
 export default SecretaryDashboard;
-

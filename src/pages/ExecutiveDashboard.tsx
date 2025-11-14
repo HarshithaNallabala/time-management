@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar, Clock, LogOut, Plus, Users, FileText, MapPin } from "lucide-react";
+import { Calendar, Clock, LogOut, Plus, Users, FileText, MapPin, CheckCircle2, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "@/components/Layout";
 import {
@@ -16,6 +16,28 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
+import { getTasks, createTask, resolveTask, deleteTask } from "@/integrations/api/tasks";
+import { getMeetings, createMeeting, resolveMeeting } from "@/integrations/api/meetings";
+import { createLeave } from "@/integrations/api/leaves";
+
+type Meeting = {
+  _id?: string;
+  title: string;
+  date: string; // ISO
+  time: string;
+  venue?: string;
+  project?: string;
+  attendees?: string[];
+  status?: "pending" | "completed";
+};
+
+type Task = {
+  _id?: string;
+  task: string;
+  time?: string;
+  status?: "pending" | "completed";
+};
 
 const ExecutiveDashboard = () => {
   const navigate = useNavigate();
@@ -24,78 +46,179 @@ const ExecutiveDashboard = () => {
   // Popups
   const [openAddMeeting, setOpenAddMeeting] = useState(false);
   const [openAddTask, setOpenAddTask] = useState(false);
-  const [selectedMeeting, setSelectedMeeting] = useState(null);
+  const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
+
+  // Delete confirm dialog for tasks
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+
+  // Mark leave dialog
+  const [leaveOpen, setLeaveOpen] = useState(false);
 
   // Data states
-  const [todaysMeetings, setTodaysMeetings] = useState([
-    {
-      id: 1,
-      title: "Project Alpha Review",
-      time: "9:00 AM - 10:00 AM",
-      venue: "Conference Room A",
-      attendees: ["John Smith", "Sarah Johnson"],
-      project: "Alpha Development"
-    },
-    {
-      id: 2,
-      title: "Budget Planning",
-      time: "11:30 AM - 12:30 PM",
-      venue: "Meeting Room 3",
-      attendees: ["Michael Brown"],
-      project: "Q4 Budget"
-    },
-    {
-      id: 3,
-      title: "Team Standup",
-      time: "2:00 PM - 2:30 PM",
-      venue: "Virtual - Zoom",
-      attendees: ["Dev Team"],
-      project: "Sprint Planning"
-    }
-  ]);
-
-  const [upcomingTasks, setUpcomingTasks] = useState([
-    { id: 1, task: "Review Q3 Reports", time: "3:00 PM" },
-    { id: 2, task: "Prepare presentation", time: "4:30 PM" }
-  ]);
+  const [todaysMeetings, setTodaysMeetings] = useState<Meeting[]>([]);
+  const [upcomingTasks, setUpcomingTasks] = useState<Task[]>([]);
 
   // Form states
-  const [newMeeting, setNewMeeting] = useState({
+  const [newMeeting, setNewMeeting] = useState<Meeting>({
     title: "",
+    date: "", // yyyy-mm-dd
     time: "",
     venue: "",
     project: "",
+    attendees: [],
   });
 
-  const [newTask, setNewTask] = useState({
+  const [newTask, setNewTask] = useState<Task>({
     task: "",
     time: "",
   });
 
-  // Handlers
-  const handleAddAppointment = () => {
-    if (!newMeeting.title || !newMeeting.time) return;
-    setTodaysMeetings([
-      ...todaysMeetings,
-      {
-        id: todaysMeetings.length + 1,
-        ...newMeeting,
-        attendees: [],
-      },
-    ]);
-    setOpenAddMeeting(false);
-    setNewMeeting({ title: "", time: "", venue: "", project: "" });
+  // Leave form
+  const [leaveStart, setLeaveStart] = useState<string>("");
+  const [leaveEnd, setLeaveEnd] = useState<string>("");
+  const [leaveReason, setLeaveReason] = useState<string>("");
+
+  const authGuard = () => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      toast.error("Please log in");
+      navigate("/login");
+      return false;
+    }
+    return true;
   };
 
-  const handleAddTask = () => {
-    if (!newTask.task) return;
-    setUpcomingTasks([
-      ...upcomingTasks,
-      { id: upcomingTasks.length + 1, ...newTask },
-    ]);
-    setOpenAddTask(false);
-    setNewTask({ task: "", time: "" });
+  const loadData = async () => {
+    try {
+      const todayISO = new Date().toISOString().slice(0, 10);
+      const meetings = await getMeetings(todayISO, todayISO); // only today
+      const tasks = await getTasks();
+      setTodaysMeetings(meetings);
+      setUpcomingTasks(tasks);
+    } catch {
+      toast.error("Failed to load data");
+    }
   };
+
+  useEffect(() => {
+    if (!authGuard()) return;
+    loadData();
+  }, []);
+
+  // Create appointment
+  const handleAddAppointment = async () => {
+    if (!newMeeting.title || !newMeeting.time || !newMeeting.date) {
+      toast.error("Title, Date & Time are required");
+      return;
+    }
+    try {
+      await createMeeting({
+        title: newMeeting.title,
+        date: newMeeting.date,
+        time: newMeeting.time,
+        venue: newMeeting.venue,
+        project: newMeeting.project,
+        attendees: newMeeting.attendees || [],
+      });
+      toast.success("Appointment added");
+      setOpenAddMeeting(false);
+      setNewMeeting({ title: "", date: "", time: "", venue: "", project: "", attendees: [] });
+      loadData();
+    } catch {
+      toast.error("Failed to add appointment");
+    }
+  };
+
+  // Resolve meeting
+  const handleResolveMeeting = async (id?: string) => {
+    if (!id) return;
+    try {
+      await resolveMeeting(id);
+      toast.success("Meeting marked as completed");
+      loadData();
+    } catch {
+      toast.error("Failed to resolve meeting");
+    }
+  };
+
+  // Create task
+  const handleAddTask = async () => {
+    if (!newTask.task) {
+      toast.error("Task is required");
+      return;
+    }
+    try {
+      await createTask(newTask.task, newTask.time);
+      toast.success("Task added");
+      setOpenAddTask(false);
+      setNewTask({ task: "", time: "" });
+      loadData();
+    } catch {
+      toast.error("Failed to add task");
+    }
+  };
+
+  // Resolve task
+  const handleResolveTask = async (id?: string) => {
+    if (!id) return;
+    try {
+      await resolveTask(id);
+      toast.success("Task completed");
+      loadData();
+    } catch {
+      toast.error("Failed to resolve task");
+    }
+  };
+
+  // Delete task (with confirm)
+  const askDeleteTask = (task: Task) => {
+    setTaskToDelete(task);
+    setDeleteConfirmOpen(true);
+  };
+
+  const doDeleteTask = async () => {
+    if (!taskToDelete?._id) return;
+    try {
+      await deleteTask(taskToDelete._id);
+      toast.success("Task deleted");
+      setDeleteConfirmOpen(false);
+      setTaskToDelete(null);
+      loadData();
+    } catch {
+      toast.error("Failed to delete task");
+    }
+  };
+
+  // Mark leave
+  const handleMarkLeave = async () => {
+    if (!leaveStart || !leaveEnd) {
+      toast.error("Select start and end dates");
+      return;
+    }
+    try {
+      const { createLeave } = await import("@/integrations/api/leaves");
+      await createLeave(leaveStart, leaveEnd, leaveReason);
+      toast.success("Leave period saved");
+      setLeaveOpen(false);
+      setLeaveStart("");
+      setLeaveEnd("");
+      setLeaveReason("");
+      // No reload needed for dashboard cards; calendar page will show it.
+    } catch {
+      toast.error("Failed to mark leave");
+    }
+  };
+
+  // Logout
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("role");
+    navigate("/");
+  };
+
+  const todayCount = todaysMeetings.length;
+  const pendingTasks = upcomingTasks.filter(t => t.status !== "completed").length;
 
   return (
     <Layout>
@@ -118,10 +241,45 @@ const ExecutiveDashboard = () => {
                   </p>
                 </div>
               </div>
-              <Button variant="outline" onClick={() => navigate("/")}>
-                <LogOut className="w-4 h-4 mr-2" />
-                Logout
-              </Button>
+              <div className="flex gap-2">
+                <Dialog open={leaveOpen} onOpenChange={setLeaveOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" className="mr-2">
+                      <Users className="w-4 h-4 mr-2" />
+                      Mark Leave Period
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Mark Leave Period</DialogTitle>
+                      <DialogDescription>Select a date range for leave.</DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="grid grid-cols-4 items-center gap-4">
+                        <Label className="text-right">Start</Label>
+                        <Input type="date" className="col-span-3" value={leaveStart} onChange={e => setLeaveStart(e.target.value)} />
+                      </div>
+                      <div className="grid grid-cols-4 items-center gap-4">
+                        <Label className="text-right">End</Label>
+                        <Input type="date" className="col-span-3" value={leaveEnd} onChange={e => setLeaveEnd(e.target.value)} />
+                      </div>
+                      <div className="grid grid-cols-4 items-center gap-4">
+                        <Label className="text-right">Reason</Label>
+                        <Input className="col-span-3" value={leaveReason} onChange={e => setLeaveReason(e.target.value)} placeholder="Optional" />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setLeaveOpen(false)}>Cancel</Button>
+                      <Button onClick={handleMarkLeave}>Save</Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+
+                <Button variant="outline" onClick={handleLogout}>
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Logout
+                </Button>
+              </div>
             </div>
           </div>
         </header>
@@ -136,7 +294,7 @@ const ExecutiveDashboard = () => {
                 <Calendar className="w-4 h-4 text-primary" />
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold text-primary">{todaysMeetings.length}</div>
+                <div className="text-3xl font-bold text-primary">{todayCount}</div>
                 <p className="text-xs text-muted-foreground mt-1">Scheduled appointments</p>
               </CardContent>
             </Card>
@@ -147,8 +305,8 @@ const ExecutiveDashboard = () => {
                 <Clock className="w-4 h-4 text-accent" />
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold text-accent">4.5</div>
-                <p className="text-xs text-muted-foreground mt-1">Hours in meetings today</p>
+                <div className="text-3xl font-bold text-accent">—</div>
+                <p className="text-xs text-muted-foreground mt-1">Auto-calc later</p>
               </CardContent>
             </Card>
 
@@ -158,7 +316,7 @@ const ExecutiveDashboard = () => {
                 <FileText className="w-4 h-4 text-secondary" />
               </CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold text-secondary">{upcomingTasks.length}</div>
+                <div className="text-3xl font-bold text-secondary">{pendingTasks}</div>
                 <p className="text-xs text-muted-foreground mt-1">Tasks to complete</p>
               </CardContent>
             </Card>
@@ -187,50 +345,45 @@ const ExecutiveDashboard = () => {
                       <DialogContent>
                         <DialogHeader>
                           <DialogTitle>Add New Appointment</DialogTitle>
-                          <DialogDescription>
-                            Fill in details for the new meeting.
-                          </DialogDescription>
+                          <DialogDescription>Fill in details for the new meeting.</DialogDescription>
                         </DialogHeader>
                         <div className="grid gap-4 py-4">
                           <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="title" className="text-right">
-                              Title
-                            </Label>
+                            <Label className="text-right">Title</Label>
                             <Input
-                              id="title"
                               value={newMeeting.title}
                               onChange={(e) => setNewMeeting({ ...newMeeting, title: e.target.value })}
                               className="col-span-3"
                             />
                           </div>
                           <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="time" className="text-right">
-                              Time
-                            </Label>
+                            <Label className="text-right">Date</Label>
                             <Input
-                              id="time"
+                              type="date"
+                              value={newMeeting.date}
+                              onChange={(e) => setNewMeeting({ ...newMeeting, date: e.target.value })}
+                              className="col-span-3"
+                            />
+                          </div>
+                          <div className="grid grid-cols-4 items-center gap-4">
+                            <Label className="text-right">Time</Label>
+                            <Input
                               value={newMeeting.time}
                               onChange={(e) => setNewMeeting({ ...newMeeting, time: e.target.value })}
                               className="col-span-3"
                             />
                           </div>
                           <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="venue" className="text-right">
-                              Venue
-                            </Label>
+                            <Label className="text-right">Venue</Label>
                             <Input
-                              id="venue"
                               value={newMeeting.venue}
                               onChange={(e) => setNewMeeting({ ...newMeeting, venue: e.target.value })}
                               className="col-span-3"
                             />
                           </div>
                           <div className="grid grid-cols-4 items-center gap-4">
-                            <Label htmlFor="project" className="text-right">
-                              Project
-                            </Label>
+                            <Label className="text-right">Project</Label>
                             <Input
-                              id="project"
                               value={newMeeting.project}
                               onChange={(e) => setNewMeeting({ ...newMeeting, project: e.target.value })}
                               className="col-span-3"
@@ -250,38 +403,53 @@ const ExecutiveDashboard = () => {
 
                 {/* Meeting list */}
                 <CardContent className="space-y-4">
-                  {todaysMeetings.map((meeting) => (
+                  {todaysMeetings.map((m) => (
                     <div
-                      key={meeting.id}
+                      key={m._id}
                       className="p-4 rounded-lg border border-border bg-card hover:shadow-md transition-shadow"
                     >
-                      <div className="flex items-start justify-between">
+                      <div className="flex items-start justify-between gap-4">
                         <div className="flex-1">
-                          <h3 className="font-semibold text-foreground mb-1">{meeting.title}</h3>
+                          <h3 className="font-semibold text-foreground mb-1">
+                            {m.title}{" "}
+                            {m.status === "completed" ? (
+                              <Badge variant="secondary" className="ml-2">Completed</Badge>
+                            ) : (
+                              <Badge className="ml-2">Pending</Badge>
+                            )}
+                          </h3>
                           <div className="space-y-1 text-sm text-muted-foreground">
                             <div className="flex items-center">
                               <Clock className="w-4 h-4 mr-2" />
-                              {meeting.time}
+                              {new Date(m.date).toLocaleDateString()} • {m.time}
                             </div>
-                            <div className="flex items-center">
-                              <Users className="w-4 h-4 mr-2" />
-                              {meeting.venue}
-                            </div>
-                            <div className="text-xs text-accent mt-2">
-                              Project: {meeting.project}
-                            </div>
+                            {m.venue && (
+                              <div className="flex items-center">
+                                <Users className="w-4 h-4 mr-2" />
+                                {m.venue}
+                              </div>
+                            )}
+                            {m.project && (
+                              <div className="text-xs text-accent mt-2">Project: {m.project}</div>
+                            )}
                           </div>
                         </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setSelectedMeeting(meeting)}
-                        >
-                          View Details
-                        </Button>
+
+                        <div className="flex gap-2">
+                          {m.status !== "completed" && (
+                            <Button variant="outline" size="sm" onClick={() => handleResolveMeeting(m._id)}>
+                              <CheckCircle2 className="w-4 h-4 mr-1" />
+                              Resolve
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
+
+                  {todaysMeetings.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No meetings today.</p>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -295,17 +463,43 @@ const ExecutiveDashboard = () => {
                   <CardDescription>Today's to-do list</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {upcomingTasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="p-3 rounded-lg bg-muted hover:bg-muted/80 transition-colors"
-                    >
-                      <div>
-                        <p className="font-medium text-sm">{task.task}</p>
-                        <p className="text-xs text-muted-foreground">{task.time}</p>
+                  {upcomingTasks.map((t) => (
+                    <div key={t._id} className="p-3 rounded-lg bg-muted hover:bg-muted/80 transition-colors">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-medium text-sm">
+                            {t.task}{" "}
+                            {t.status === "completed" && (
+                              <Badge variant="secondary" className="ml-1">Done</Badge>
+                            )}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{t.time}</p>
+                        </div>
+
+                        <div className="flex gap-2">
+                          {t.status !== "completed" ? (
+                            <Button variant="outline" size="sm" onClick={() => handleResolveTask(t._id)}>
+                              <CheckCircle2 className="w-4 h-4 mr-1" />
+                              Resolve
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => askDeleteTask(t)}
+                            >
+                              <Trash2 className="w-4 h-4 mr-1" />
+                              Delete
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
+
+                  {upcomingTasks.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No tasks yet.</p>
+                  )}
 
                   {/* ADD TASK POPUP */}
                   <Dialog open={openAddTask} onOpenChange={setOpenAddTask}>
@@ -323,22 +517,16 @@ const ExecutiveDashboard = () => {
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid grid-cols-4 items-center gap-4">
-                          <Label htmlFor="task" className="text-right">
-                            Task
-                          </Label>
+                          <Label className="text-right">Task</Label>
                           <Input
-                            id="task"
                             value={newTask.task}
                             onChange={(e) => setNewTask({ ...newTask, task: e.target.value })}
                             className="col-span-3"
                           />
                         </div>
                         <div className="grid grid-cols-4 items-center gap-4">
-                          <Label htmlFor="time" className="text-right">
-                            Time
-                          </Label>
+                          <Label className="text-right">Time</Label>
                           <Input
-                            id="time"
                             value={newTask.time}
                             onChange={(e) => setNewTask({ ...newTask, time: e.target.value })}
                             className="col-span-3"
@@ -362,7 +550,7 @@ const ExecutiveDashboard = () => {
                   <CardTitle>Quick Actions</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  <Button variant="outline" className="w-full justify-start">
+                  <Button variant="outline" className="w-full justify-start" onClick={() => setLeaveOpen(true)}>
                     <Users className="w-4 h-4 mr-2" />
                     Mark Leave Period
                   </Button>
@@ -383,7 +571,7 @@ const ExecutiveDashboard = () => {
               <div className="space-y-4 py-2">
                 <div className="flex items-center gap-2 text-sm">
                   <Clock className="w-4 h-4 text-muted-foreground" />
-                  <span>{selectedMeeting.time}</span>
+                  <span>{new Date(selectedMeeting.date).toLocaleDateString()} • {selectedMeeting.time}</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm">
                   <MapPin className="w-4 h-4 text-muted-foreground" />
@@ -393,16 +581,18 @@ const ExecutiveDashboard = () => {
                   <p className="text-sm font-medium">Project:</p>
                   <Badge variant="secondary">{selectedMeeting.project}</Badge>
                 </div>
-                <div>
-                  <p className="text-sm font-medium mb-2">Attendees:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedMeeting.attendees.map((person, i) => (
-                      <Badge key={i} variant="outline">
-                        {person}
-                      </Badge>
-                    ))}
+                {!!selectedMeeting.attendees?.length && (
+                  <div>
+                    <p className="text-sm font-medium mb-2">Attendees:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedMeeting.attendees!.map((person, i) => (
+                        <Badge key={i} variant="outline">
+                          {person}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setSelectedMeeting(null)}>
@@ -412,6 +602,27 @@ const ExecutiveDashboard = () => {
             </DialogContent>
           </Dialog>
         )}
+
+        {/* CONFIRM DELETE TASK */}
+        <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Task</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete this completed task?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-2">
+              <p className="text-sm">
+                <strong>{taskToDelete?.task}</strong> {taskToDelete?.time ? `• ${taskToDelete?.time}` : ""}
+              </p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
+              <Button onClick={doDeleteTask} className="bg-red-600 hover:bg-red-700">Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </Layout>
   );
